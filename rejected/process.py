@@ -61,7 +61,8 @@ class Connection(state.State):
         self.io_loop = io_loop
         self.name = name
         self.publisher_confirm = publisher_confirmations
-        self.handle = self.connect()
+        self.handle = None
+        self.connect()
 
         # Override STOPPED with CLOSED
         self.STATES[0x08] = 'CLOSED'
@@ -72,7 +73,7 @@ class Connection(state.State):
 
     def connect(self):
         self.set_state(self.STATE_CONNECTING)
-        return pika.TornadoConnection(
+        self.handle = pika.TornadoConnection(
             self._connection_parameters,
             on_open_callback=self.on_open,
             on_open_error_callback=self.on_open_error,
@@ -157,15 +158,12 @@ class Connection(state.State):
         :param str reply_text: The AMQP reply text
 
         """
-        LOGGER.debug('Connection %s channel was closed: (%s) %s',
-                     self.name, reply_code, reply_text)
+        LOGGER.warning('Connection %s channel was closed: (%s) %s',
+                       self.name, reply_code, reply_text)
         del self.channel
-        if self.is_running:
-            self.set_state(self.STATE_CONNECTING)
-            self.handle.channel(self.on_channel_open)
-        elif self.is_shutting_down:
-            LOGGER.debug('Connection %s closing', self.name)
-            self.handle.close()
+
+        LOGGER.debug('Connection %s closing', self.name)
+        self.handle.close()
 
     def consume(self, queue_name, no_ack, prefetch_count):
         self.set_state(self.STATE_ACTIVE)
@@ -499,7 +497,8 @@ class Process(multiprocessing.Process, state.State):
 
     def on_connection_closed(self, name):
         if self.is_running:
-            LOGGER.warning('Connection %s was closed, reconnecting', name)
+            LOGGER.warning('Connection %s was closed, reconnecting in 5 seconds', name)
+            time.sleep(5)
             return self.connections[name].connect()
 
         ready = all([c.is_closed for c in self.connections.values()])
